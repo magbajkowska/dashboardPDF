@@ -56,6 +56,14 @@
   .msg.err { color: #c0626b; } .msg.ok { color: #4f9a85; }
   .dates { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; font-size: .85rem; }
   .empty { color: var(--muted); font-size: .85rem; }
+  .tabs { display: flex; gap: 6px; padding: 8px 28px 0; border-bottom: 1px solid var(--border); }
+  .tab { border-radius: 8px 8px 0 0; border-bottom: none; background: #ececf6; font-weight: 600; font-size: .85rem; letter-spacing: .03em; }
+  .tab.active { background: var(--card); color: #4f6fa8; border-color: var(--border); }
+  .xmr { padding: 16px 28px 28px; display: grid; gap: 20px; }
+  .xmr .chart-wrap { height: 340px; }
+  .xmr .stats { display: flex; flex-wrap: wrap; gap: 6px 24px; font-size: .85rem; color: var(--muted); margin-bottom: 8px; }
+  .xmr .stats b { color: var(--text); }
+  [hidden] { display: none !important; }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .layout > main, .layout > .add-bar, .layout > .side { grid-column: 1; grid-row: auto; } .layout > .side { order: -1; } }
 </style>
 </head>
@@ -65,7 +73,12 @@
   <p>Źródło: <code>Lead Times - 2024-25.xlsx</code> · <span id="source"></span></p>
 </header>
 
-<div class="layout">
+<nav class="tabs">
+  <button class="tab active" data-tab="lead">CZAS REALIZACJI</button>
+  <button class="tab" data-tab="tp">TEMPO DOSTARCZANIA</button>
+</nav>
+
+<div class="layout" id="tab-lead">
   <main class="card">
     <h2>Czas realizacji vs. data ukończenia</h2>
     <div class="chart-wrap"><canvas id="chart"></canvas></div>
@@ -122,6 +135,20 @@
     </section>
 
   </aside>
+</div>
+
+<div class="xmr" id="tab-tp" hidden>
+  <section class="card">
+    <h2>Tempo dostarczania – wykres X (tygodniowo)</h2>
+    <div class="stats" id="xStats"></div>
+    <div class="chart-wrap"><canvas id="xChart"></canvas></div>
+  </section>
+  <section class="card">
+    <h2>Tempo dostarczania – wykres MR (zakres ruchomy)</h2>
+    <div class="stats" id="mrStats"></div>
+    <div class="chart-wrap"><canvas id="mrChart"></canvas></div>
+    <div class="hint" id="tpInfo"></div>
+  </section>
 </div>
 
 <script>
@@ -369,6 +396,103 @@ function initUI() {
     msg.className = 'msg ok'; msg.textContent = 'Usunięto ręcznie dodane punkty.';
   };
 }
+
+// ---- TEMPO DOSTARCZANIA: wykres XMR (agregacja tygodniowa od 7 stycznia) ----
+const TP_FILE = 'Throughput Daily.xlsx';
+const TP_START = new Date(2025, 0, 7);
+const TP_FALLBACK = [0,2,10,3,0,0,2,3,7,0,0,0,0,5,2,0,0,0,0,0,1,1,0,5,4,0,0,7,0,2,2,12,0,0,1,0,0,2,12,0,0,1,0,0,3,11,0,0,6,0,0,6,7,0,0,2,0,0,3,5,0,0,1,0,0,9,7,0,0,3,0,0,4,10,0,0,1,0,0,5,1,0,0,2,0,0,2,11,0,0,1,0,0,5,2,0,0,1,0,0,4,7,0]; // dzienne wartości od 7.01.2025
+let xChart, mrChart, tpLoaded = false;
+
+async function loadDaily() {
+  try {
+    const res = await fetch(encodeURI(TP_FILE), { cache: 'no-cache' });
+    if (!res.ok) throw new Error(res.status);
+    const wb = XLSX.read(await res.arrayBuffer(), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true }).slice(1);
+    const out = rows.map(r => ({ date: parseDate(r[0]), n: Number(r[1]) })).filter(r => r.date && Number.isFinite(r.n));
+    if (!out.length) throw new Error('empty');
+    return { rows: out, src: 'z pliku' };
+  } catch (e) {
+    return { rows: TP_FALLBACK.map((n, i) => ({ date: new Date(2025, 0, 7 + i), n })), src: 'dane wbudowane' };
+  }
+}
+
+function weeklySeries(rows) {
+  const DAY = 86400000, byWeek = new Map();
+  rows.forEach(r => {
+    const k = Math.floor(Math.round((r.date - TP_START) / DAY) / 7);
+    if (k < 0) return;
+    const w = byWeek.get(k) || { days: 0, sum: 0 };
+    w.days++; w.sum += r.n; byWeek.set(k, w);
+  });
+  const weeks = [...byWeek.entries()].sort((a, b) => a[0] - b[0]).map(([k, w]) => ({ start: new Date(2025, 0, 7 + k * 7), ...w }));
+  const complete = weeks.filter(w => w.days === 7);
+  return { complete, dropped: weeks.length - complete.length };
+}
+
+function tpChart(id, yTitle) {
+  return new Chart(document.getElementById(id), {
+    type: 'line', data: { labels: [], datasets: [] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 250 },
+      scales: { x: { title: { display: true, text: 'Początek tygodnia (od 7 stycznia)' }, grid: { color: '#f0f0f5' } },
+                y: { title: { display: true, text: yTitle }, grid: { color: '#f0f0f5' } } },
+      plugins: { legend: { position: 'bottom', labels: { usePointStyle: true } } },
+    },
+  });
+}
+const flat = (n, v) => Array(n).fill(v);
+function lineDs(label, n, v, color, dash) {
+  return { label: `${label}: ${v.toFixed(2)}`, data: flat(n, v), borderColor: color, borderWidth: 2, borderDash: dash, pointRadius: 0, fill: false };
+}
+
+async function initThroughput() {
+  tpLoaded = true;
+  const { rows, src } = await loadDaily();
+  const { complete, dropped } = weeklySeries(rows);
+  const labels = complete.map(w => w.start.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' }));
+  const x = complete.map(w => w.sum);
+  const mr = x.slice(1).map((v, i) => Math.abs(v - x[i]));
+  const n = x.length;
+  const mean = x.reduce((a, b) => a + b, 0) / n;
+  const mrBar = mr.reduce((a, b) => a + b, 0) / mr.length;
+  const xUcl = mean + 2.66 * mrBar, xLcl = mean - 2.66 * mrBar;
+  const mrUcl = mrBar + 3.27 * mrBar, mrLcl = mrBar - 3.27 * mrBar;
+
+  const dot = (vals, lo, hi) => vals.map(v => (v > hi || v < lo) ? '#e08a8a' : '#6fb3cc');
+  xChart.data.labels = labels;
+  xChart.data.datasets = [
+    { label: 'Tempo dostarczania (tygodniowo)', data: x, borderColor: '#6fb3cc', backgroundColor: dot(x, xLcl, xUcl), pointBackgroundColor: dot(x, xLcl, xUcl), pointRadius: 5, borderWidth: 2, tension: 0 },
+    lineDs('Średnia', n, mean, '#7fbf9f', []),
+    lineDs('UCL (średnia + 2,66 × śr. MR)', n, xUcl, '#e08a8a', [6, 5]),
+    lineDs('LCL (średnia − 2,66 × śr. MR)', n, xLcl, '#e08a8a', [6, 5]),
+  ];
+  xChart.update();
+
+  mrChart.data.labels = labels.slice(1);
+  mrChart.data.datasets = [
+    { label: 'Zakres ruchomy (MR)', data: mr, borderColor: '#a88bd0', backgroundColor: dot(mr, mrLcl, mrUcl), pointBackgroundColor: dot(mr, mrLcl, mrUcl), pointRadius: 5, borderWidth: 2, tension: 0 },
+    lineDs('Śr. MR', mr.length, mrBar, '#7fbf9f', []),
+    lineDs('Śr. MR + 3,27 × śr. MR', mr.length, mrUcl, '#e08a8a', [6, 5]),
+    lineDs('Śr. MR − 3,27 × śr. MR', mr.length, mrLcl, '#e08a8a', [6, 5]),
+  ];
+  mrChart.update();
+
+  const f = v => v.toFixed(2).replace('.', ',');
+  document.getElementById('xStats').innerHTML = `<span>Średnia: <b>${f(mean)}</b></span><span>UCL: <b>${f(xUcl)}</b></span><span>LCL: <b>${f(xLcl)}</b></span>`;
+  document.getElementById('mrStats').innerHTML = `<span>Śr. MR: <b>${f(mrBar)}</b></span><span>Górny limit: <b>${f(mrUcl)}</b></span><span>Dolny limit: <b>${f(mrLcl)}</b></span>`;
+  document.getElementById('tpInfo').textContent = `Źródło: ${TP_FILE} (${src}). ${n} pełnych tygodni (7-dniowych okresów liczonych od 7 stycznia)${dropped ? `; pominięto ${dropped} niepełny ostatni tydzień` : ''}. Punkty poza limitami zaznaczono na czerwono.`;
+}
+
+document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === b));
+  document.getElementById('tab-lead').hidden = b.dataset.tab !== 'lead';
+  document.getElementById('tab-tp').hidden = b.dataset.tab !== 'tp';
+  if (b.dataset.tab === 'tp') {
+    if (!tpLoaded) { xChart = tpChart('xChart', 'Elementy / tydzień'); mrChart = tpChart('mrChart', 'Zakres ruchomy'); initThroughput(); }
+    else { xChart.resize(); mrChart.resize(); }
+  }
+}));
 
 (async () => {
   initChart(); initUI();
