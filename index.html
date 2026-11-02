@@ -48,6 +48,7 @@
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .msg { font-size: .8rem; margin-top: 8px; min-height: 1em; }
   .msg.err { color: #c0626b; } .msg.ok { color: #4f9a85; }
+  .dates { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; font-size: .85rem; }
   .empty { color: var(--muted); font-size: .85rem; }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .side { order: -1; } }
 </style>
@@ -76,6 +77,13 @@
       <label style="display:flex;gap:10px;align-items:center;padding-top:6px;font-size:.85rem;cursor:pointer">
         <input type="checkbox" id="showRemoved" checked> Pokazuj usunięte punkty
       </label>
+
+      <h2 style="margin-top:18px">Zakres dat ukończenia</h2>
+      <div class="row dates">
+        <label for="dFrom">Od</label><input id="dFrom" type="date">
+        <label for="dTo">Do</label><input id="dTo" type="date">
+      </div>
+      <div class="actions" style="margin-top:8px"><button type="button" id="resetDates">Cały zakres</button></div>
 
       <h2 style="margin-top:18px">Prognozy (percentyle)</h2>
       <table class="pct">
@@ -131,16 +139,17 @@ const FALLBACK = [["15 Lipca 2024","S",49],["22 Sierpnia 2024","S",48],["10 Wrze
 let points = [];
 let state = loadState();
 let chart;
+let dataRange = { min: '', max: '' };
 
 function loadState() {
   try {
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (s) return { removed: new Set(s.removed || []), added: s.added || [], sizes: new Set(s.sizes || SIZES), showRemoved: s.showRemoved !== false };
+    if (s) return { removed: new Set(s.removed || []), added: s.added || [], sizes: new Set(s.sizes || SIZES), showRemoved: s.showRemoved !== false, from: s.from || '', to: s.to || '' };
   } catch (e) {}
-  return { removed: new Set(), added: [], sizes: new Set(SIZES), showRemoved: true };
+  return { removed: new Set(), added: [], sizes: new Set(SIZES), showRemoved: true, from: '', to: '' };
 }
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ removed: [...state.removed], added: state.added, sizes: [...state.sizes], showRemoved: state.showRemoved }));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ removed: [...state.removed], added: state.added, sizes: [...state.sizes], showRemoved: state.showRemoved, from: state.from, to: state.to }));
 }
 
 function parseDate(v) {
@@ -194,9 +203,14 @@ function percentile(values, p) {
   return s[lo] + (s[hi] - s[lo]) * (idx - lo);
 }
 
+function inRange(p) {
+  const d = isoDate(p.date);
+  return (!state.from || d >= state.from) && (!state.to || d <= state.to);
+}
+
 function buildDatasets() {
   const all = allPoints();
-  const visible = all.filter(p => state.sizes.has(p.size));
+  const visible = all.filter(p => state.sizes.has(p.size) && inRange(p));
   const active = visible.filter(p => !state.removed.has(p.id));
   const toXY = p => ({ x: p.date.getTime(), y: p.days, pt: p });
 
@@ -215,7 +229,8 @@ function buildDatasets() {
     borderDash: [2, 2], pointRadius: 7, pointHoverRadius: 10,
   });
 
-  const xs = all.map(p => p.date.getTime());
+  const scoped = all.filter(inRange);
+  const xs = (scoped.length ? scoped : all).map(p => p.date.getTime());
   const xMin = Math.min(...xs), xMax = Math.max(...xs);
   const pad = (xMax - xMin) * 0.03 || 86400000 * 7;
   const vals = active.map(p => p.days);
@@ -228,17 +243,23 @@ function buildDatasets() {
       borderColor: color, borderWidth: 2, borderDash: [6, 5], pointRadius: 0, pointHoverRadius: 0, fill: false,
     });
   });
-  return { ds, pv, active, visible, all, xMin: xMin - pad, xMax: xMax + pad };
+  return { ds, pv, active, visible, all: scoped, xMin: xMin - pad, xMax: xMax + pad };
 }
 
 function render() {
   const { ds, pv, active, all, xMin, xMax } = buildDatasets();
+  const fullAll = allPoints();
+  const ts = fullAll.map(p => isoDate(p.date)).sort();
+  dataRange = { min: ts[0] || '', max: ts[ts.length - 1] || '' };
+  const dF = document.getElementById('dFrom'), dT = document.getElementById('dTo');
+  dF.min = dT.min = dataRange.min; dF.max = dT.max = dataRange.max;
+  dF.value = state.from; dT.value = state.to;
   chart.data.datasets = ds;
   chart.options.scales.x.min = xMin; chart.options.scales.x.max = xMax;
   chart.update();
 
   PCTS.forEach(({ p }) => document.getElementById('p' + p).textContent = pv[p] == null ? '–' : `${Math.round(pv[p])} dni`);
-  document.getElementById('pctInfo').textContent = `Na podstawie ${active.length} elementów. 85% elementów kończy się w ≤ ${pv[85] == null ? '–' : Math.round(pv[85])} dni.`;
+  document.getElementById('pctInfo').textContent = `Na podstawie ${active.length} elementów${state.from || state.to ? ' z wybranego zakresu dat' : ''}. 85% elementów kończy się w ≤ ${pv[85] == null ? '–' : Math.round(pv[85])} dni.`;
   SIZES.forEach(s => {
     const n = all.filter(p => p.size === s);
     document.getElementById('cnt-' + s).textContent = `${n.filter(p => !state.removed.has(p.id)).length} / ${n.length}`;
@@ -247,7 +268,7 @@ function render() {
   document.getElementById('showRemoved').checked = state.showRemoved;
 
   const list = document.getElementById('removedList');
-  const removed = all.filter(p => state.removed.has(p.id)).sort((a, b) => a.date - b.date);
+  const removed = fullAll.filter(p => state.removed.has(p.id)).sort((a, b) => a.date - b.date);
   list.innerHTML = removed.length ? '' : '<li class="empty">Brak usuniętych punktów</li>';
   removed.forEach(p => {
     const li = document.createElement('li');
@@ -307,6 +328,14 @@ function initUI() {
     cb.checked ? state.sizes.add(cb.value) : state.sizes.delete(cb.value); saveState(); render();
   }));
   document.getElementById('showRemoved').addEventListener('change', e => { state.showRemoved = e.target.checked; saveState(); render(); });
+  const setRange = () => {
+    let f = document.getElementById('dFrom').value, t = document.getElementById('dTo').value;
+    if (f && t && f > t) [f, t] = [t, f];
+    state.from = f; state.to = t; saveState(); render();
+  };
+  document.getElementById('dFrom').addEventListener('change', setRange);
+  document.getElementById('dTo').addEventListener('change', setRange);
+  document.getElementById('resetDates').onclick = () => { state.from = state.to = ''; saveState(); render(); };
   document.getElementById('restoreAll').onclick = () => { state.removed.clear(); saveState(); render(); };
   document.getElementById('fDate').value = isoDate(new Date());
 
