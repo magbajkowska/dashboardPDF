@@ -1,1 +1,344 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard – Czasy realizacji 2024–25</title>
+<script src="vendor/chart.umd.min.js"></script>
+<script src="vendor/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="vendor/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #f7f7fb; --card: #fff; --text: #3a3a4a; --muted: #8a8a9a; --border: #e4e4ee;
+    --S: #A8D8EA; --S-b: #6fb3cc;
+    --M: #FFD3B6; --M-b: #f0a77a;
+    --L: #D4C1EC; --L-b: #a88bd0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 20px 28px 8px; }
+  header h1 { margin: 0; font-size: 1.5rem; font-weight: 600; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: .9rem; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; padding: 16px 28px 28px; align-items: start; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; box-shadow: 0 2px 8px rgba(60,60,90,.04); }
+  .card h2 { margin: 0 0 12px; font-size: 1rem; font-weight: 600; }
+  .chart-wrap { position: relative; height: 560px; }
+  .side { display: flex; flex-direction: column; gap: 20px; }
+  .hint { color: var(--muted); font-size: .8rem; margin-top: 10px; }
+  .sizes label { display: flex; align-items: center; gap: 10px; padding: 6px 0; cursor: pointer; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+  .dot.S { background: var(--S); border: 2px solid var(--S-b); }
+  .dot.M { background: var(--M); border: 2px solid var(--M-b); }
+  .dot.L { background: var(--L); border: 2px solid var(--L-b); }
+  .count { margin-left: auto; color: var(--muted); font-size: .85rem; }
+  table.pct { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  table.pct td { padding: 6px 0; border-bottom: 1px dashed var(--border); }
+  table.pct td:last-child { text-align: right; font-weight: 600; }
+  .line { display: inline-block; width: 22px; border-top: 2px dashed; vertical-align: middle; margin-right: 8px; }
+  .removed-list { list-style: none; padding: 0; margin: 0; max-height: 160px; overflow: auto; font-size: .85rem; }
+  .removed-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+  .removed-list li span { flex: 1; }
+  button { font: inherit; border: 1px solid var(--border); background: #fafaff; color: var(--text); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover { background: #efeffa; }
+  button.small { padding: 2px 8px; font-size: .8rem; }
+  button.primary { background: #c9e4de; border-color: #9fcbc1; }
+  button.primary:hover { background: #b6dad2; }
+  form .row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: .85rem; }
+  input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .msg { font-size: .8rem; margin-top: 8px; min-height: 1em; }
+  .msg.err { color: #c0626b; } .msg.ok { color: #4f9a85; }
+  .empty { color: var(--muted); font-size: .85rem; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .side { order: -1; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Czasy realizacji 2024–25</h1>
+  <p>Źródło: <code>Lead Times - 2024-25.xlsx</code> · <span id="source"></span></p>
+</header>
 
+<div class="layout">
+  <main class="card">
+    <h2>Czas realizacji vs. data ukończenia</h2>
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    <div class="hint">Kliknij punkt, aby go usunąć (element odstający). Kliknij usunięty (szary) punkt, aby go przywrócić. Linie prognoz liczone są z punktów widocznych i nieusuniętych.</div>
+  </main>
+
+  <aside class="side">
+    <section class="card" id="filters">
+      <h2>Filtry</h2>
+      <div class="sizes">
+        <label><input type="checkbox" value="S" checked> <span class="dot S"></span> S <span class="count" id="cnt-S"></span></label>
+        <label><input type="checkbox" value="M" checked> <span class="dot M"></span> M <span class="count" id="cnt-M"></span></label>
+        <label><input type="checkbox" value="L" checked> <span class="dot L"></span> L <span class="count" id="cnt-L"></span></label>
+      </div>
+      <label style="display:flex;gap:10px;align-items:center;padding-top:6px;font-size:.85rem;cursor:pointer">
+        <input type="checkbox" id="showRemoved" checked> Pokazuj usunięte punkty
+      </label>
+
+      <h2 style="margin-top:18px">Prognozy (percentyle)</h2>
+      <table class="pct">
+        <tr><td><span class="line" style="border-color:#7fbf9f"></span>50% (P50)</td><td id="p50">–</td></tr>
+        <tr><td><span class="line" style="border-color:#e8b45a"></span>85% (P85)</td><td id="p85">–</td></tr>
+        <tr><td><span class="line" style="border-color:#e08a8a"></span>96% (P96)</td><td id="p96">–</td></tr>
+      </table>
+      <div class="hint" id="pctInfo"></div>
+
+      <h2 style="margin-top:18px">Usunięte punkty</h2>
+      <ul class="removed-list" id="removedList"></ul>
+      <div class="actions" style="margin-top:8px"><button type="button" id="restoreAll">Przywróć wszystkie</button></div>
+    </section>
+
+    <section class="card">
+      <h2>Dodaj punkt danych</h2>
+      <form id="addForm">
+        <div class="row"><label for="fSize">Rozmiar</label>
+          <select id="fSize" required><option>S</option><option>M</option><option>L</option></select></div>
+        <div class="row"><label for="fDays">Czas realizacji (dni)</label>
+          <input id="fDays" type="number" min="0" step="1" required></div>
+        <div class="row"><label for="fDate">Data ukończenia</label>
+          <input id="fDate" type="date" required></div>
+        <div class="actions">
+          <button class="primary" type="submit">Dodaj</button>
+          <button type="button" id="clearAdded">Usuń dodane</button>
+        </div>
+        <div class="msg" id="formMsg"></div>
+      </form>
+    </section>
+  </aside>
+</div>
+
+<script>
+const XLSX_FILE = 'Lead Times - 2024-25.xlsx';
+const STORAGE_KEY = 'leadTimesDashboard.v1';
+const SIZES = ['S', 'M', 'L'];
+const COLORS = {
+  S: { bg: 'rgba(168,216,234,0.9)', border: '#6fb3cc' },
+  M: { bg: 'rgba(255,211,182,0.9)', border: '#f0a77a' },
+  L: { bg: 'rgba(212,193,236,0.9)', border: '#a88bd0' },
+};
+const PCTS = [
+  { p: 50, color: '#7fbf9f' },
+  { p: 85, color: '#e8b45a' },
+  { p: 96, color: '#e08a8a' },
+];
+const MONTHS = { stycznia:0, lutego:1, marca:2, kwietnia:3, maja:4, czerwca:5, lipca:6, sierpnia:7, 'września':8, 'października':9, listopada:10, grudnia:11 };
+
+// Fallback, used if the xlsx cannot be fetched (e.g. when opened from file://)
+const FALLBACK = [["15 Lipca 2024","S",49],["22 Sierpnia 2024","S",48],["10 Września 2024","S",87],["25 Września 2024","M",57],["5 Października 2024","M",148],["14 Października 2024","S",53],["28 Października 2024","S",45],["18 Listopada 2024","M",145],["4 Grudnia 2024","L",105],["8 Stycznia 2025","S",5],["20 Stycznia 2025","L",163],["14 Lutego 2025","S",43],["26 Lutego 2025","M",415],["15 Marca 2025","L",123],["10 Kwietnia 2025","M",103],["5 Maja 2025","L",104],["12 Czerwca 2025","L",302],["25 Czerwca 2025","L",158],["2 Lipca 2025","L",98],["11 Lipca 2025","S",52],["18 Lipca 2025","M",95],["29 Lipca 2025","S",70],["3 Sierpnia 2025","M",95],["14 Sierpnia 2025","M",101],["21 Sierpnia 2025","M",57],["29 Sierpnia 2025","M",57],["8 Września 2025","S",53],["22 Września 2025","L",137],["4 Października 2025","S",73],["12 Października 2025","M",60],["19 Października 2025","S",126],["27 Października 2025","M",57],["5 Listopada 2025","L",124],["15 Listopada 2025","M",75],["25 Listopada 2025","M",89],["10 Grudnia 2025","S",44]];
+
+let points = [];
+let state = loadState();
+let chart;
+
+function loadState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (s) return { removed: new Set(s.removed || []), added: s.added || [], sizes: new Set(s.sizes || SIZES), showRemoved: s.showRemoved !== false };
+  } catch (e) {}
+  return { removed: new Set(), added: [], sizes: new Set(SIZES), showRemoved: true };
+}
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ removed: [...state.removed], added: state.added, sizes: [...state.sizes], showRemoved: state.showRemoved }));
+}
+
+function parseDate(v) {
+  if (v instanceof Date) return new Date(v.getFullYear(), v.getMonth(), v.getDate());
+  if (typeof v === 'number') { const d = XLSX.SSF.parse_date_code(v); return new Date(d.y, d.m - 1, d.d); }
+  const s = String(v).trim();
+  const m = s.match(/^(\d{1,2})\s+(\S+)\s+(\d{4})$/);
+  if (m) { const mo = MONTHS[m[2].toLowerCase()]; if (mo !== undefined) return new Date(+m[3], mo, +m[1]); }
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return new Date(+iso[1], +iso[2] - 1, +iso[3]);
+  return null;
+}
+const isoDate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const fmtDate = d => d.toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' });
+
+function rowsToPoints(rows, prefix) {
+  const out = [];
+  rows.forEach((r, i) => {
+    const date = parseDate(r[0]); const size = String(r[1] || '').trim().toUpperCase(); const days = Number(r[2]);
+    if (date && SIZES.includes(size) && Number.isFinite(days)) out.push({ id: `${prefix}${i}`, date, size, days });
+  });
+  return out;
+}
+
+async function loadData() {
+  try {
+    const res = await fetch(encodeURI(XLSX_FILE), { cache: 'no-cache' });
+    if (!res.ok) throw new Error(res.status);
+    const wb = XLSX.read(await res.arrayBuffer(), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true }).slice(1);
+    const pts = rowsToPoints(rows, 'x');
+    if (!pts.length) throw new Error('empty');
+    document.getElementById('source').textContent = `wczytano ${pts.length} wierszy z pliku`;
+    return pts;
+  } catch (e) {
+    document.getElementById('source').textContent = `dane wbudowane (${FALLBACK.length} wierszy) – nie udało się wczytać pliku`;
+    return rowsToPoints(FALLBACK, 'x');
+  }
+}
+
+function allPoints() {
+  return points.concat(state.added.map(a => ({ id: a.id, date: parseDate(a.date), size: a.size, days: a.days, added: true })));
+}
+
+// Linear interpolation (same as Excel PERCENTILE.INC)
+function percentile(values, p) {
+  if (!values.length) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const idx = (p / 100) * (s.length - 1);
+  const lo = Math.floor(idx), hi = Math.ceil(idx);
+  return s[lo] + (s[hi] - s[lo]) * (idx - lo);
+}
+
+function buildDatasets() {
+  const all = allPoints();
+  const visible = all.filter(p => state.sizes.has(p.size));
+  const active = visible.filter(p => !state.removed.has(p.id));
+  const toXY = p => ({ x: p.date.getTime(), y: p.days, pt: p });
+
+  const ds = SIZES.map(s => ({
+    type: 'scatter', label: s, kind: 'points',
+    data: active.filter(p => p.size === s).map(toXY),
+    backgroundColor: COLORS[s].bg, borderColor: COLORS[s].border, borderWidth: 1.5,
+    pointRadius: ctx => ctx.raw?.pt?.added ? 8 : 7, pointHoverRadius: 10,
+    pointStyle: ctx => ctx.raw?.pt?.added ? 'rectRot' : 'circle',
+    hidden: !state.sizes.has(s),
+  }));
+  ds.push({
+    type: 'scatter', label: 'Usunięte', kind: 'removed',
+    data: state.showRemoved ? visible.filter(p => state.removed.has(p.id)).map(toXY) : [],
+    backgroundColor: 'rgba(200,200,210,0.25)', borderColor: 'rgba(160,160,175,0.8)', borderWidth: 1.5,
+    borderDash: [2, 2], pointRadius: 7, pointHoverRadius: 10,
+  });
+
+  const xs = all.map(p => p.date.getTime());
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const pad = (xMax - xMin) * 0.03 || 86400000 * 7;
+  const vals = active.map(p => p.days);
+  const pv = {};
+  PCTS.forEach(({ p, color }) => {
+    const v = percentile(vals, p); pv[p] = v;
+    if (v !== null) ds.push({
+      type: 'line', label: `P${p}: ${Math.round(v)} dni`, kind: 'pct',
+      data: [{ x: xMin - pad, y: v }, { x: xMax + pad, y: v }],
+      borderColor: color, borderWidth: 2, borderDash: [6, 5], pointRadius: 0, pointHoverRadius: 0, fill: false,
+    });
+  });
+  return { ds, pv, active, visible, all, xMin: xMin - pad, xMax: xMax + pad };
+}
+
+function render() {
+  const { ds, pv, active, all, xMin, xMax } = buildDatasets();
+  chart.data.datasets = ds;
+  chart.options.scales.x.min = xMin; chart.options.scales.x.max = xMax;
+  chart.update();
+
+  PCTS.forEach(({ p }) => document.getElementById('p' + p).textContent = pv[p] == null ? '–' : `${Math.round(pv[p])} dni`);
+  document.getElementById('pctInfo').textContent = `Na podstawie ${active.length} elementów. 85% elementów kończy się w ≤ ${pv[85] == null ? '–' : Math.round(pv[85])} dni.`;
+  SIZES.forEach(s => {
+    const n = all.filter(p => p.size === s);
+    document.getElementById('cnt-' + s).textContent = `${n.filter(p => !state.removed.has(p.id)).length} / ${n.length}`;
+  });
+  document.querySelectorAll('.sizes input').forEach(cb => cb.checked = state.sizes.has(cb.value));
+  document.getElementById('showRemoved').checked = state.showRemoved;
+
+  const list = document.getElementById('removedList');
+  const removed = all.filter(p => state.removed.has(p.id)).sort((a, b) => a.date - b.date);
+  list.innerHTML = removed.length ? '' : '<li class="empty">Brak usuniętych punktów</li>';
+  removed.forEach(p => {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="dot ${p.size}"></span><span>${p.size} · ${p.days} dni · ${fmtDate(p.date)}</span>`;
+    const b = document.createElement('button'); b.className = 'small'; b.textContent = 'Przywróć';
+    b.onclick = () => { state.removed.delete(p.id); saveState(); render(); };
+    li.appendChild(b); list.appendChild(li);
+  });
+}
+
+function initChart() {
+  chart = new Chart(document.getElementById('chart'), {
+    type: 'scatter',
+    data: { datasets: [] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 250 },
+      interaction: { mode: 'nearest', intersect: true },
+      scales: {
+        x: { type: 'time', time: { unit: 'month', tooltipFormat: 'dd.MM.yyyy', displayFormats: { month: 'MM.yyyy' } },
+             title: { display: true, text: 'Data ukończenia' }, grid: { color: '#f0f0f5' } },
+        y: { beginAtZero: true, title: { display: true, text: 'Czas realizacji (dni)' }, grid: { color: '#f0f0f5' } },
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { usePointStyle: true, filter: (item, data) => !(data.datasets[item.datasetIndex].kind === 'removed' && !data.datasets[item.datasetIndex].data.length) } },
+        tooltip: {
+          filter: item => item.dataset.kind !== 'pct',
+          callbacks: {
+            title: items => items[0]?.raw?.pt ? fmtDate(items[0].raw.pt.date) : '',
+            label: item => {
+              const p = item.raw.pt; if (!p) return '';
+              const tag = state.removed.has(p.id) ? ' (usunięty – kliknij, aby przywrócić)' : ' (kliknij, aby usunąć)';
+              return `${p.size}: ${p.days} dni${p.added ? ' · dodany ręcznie' : ''}${tag}`;
+            },
+          },
+        },
+      },
+      onClick: (evt, els) => {
+        const el = els.find(e => chart.data.datasets[e.datasetIndex].kind !== 'pct');
+        if (!el) return;
+        const p = chart.data.datasets[el.datasetIndex].data[el.index].pt;
+        state.removed.has(p.id) ? state.removed.delete(p.id) : state.removed.add(p.id);
+        saveState(); render();
+      },
+      onHover: (evt, els) => { evt.native.target.style.cursor = els.some(e => chart.data.datasets[e.datasetIndex].kind !== 'pct') ? 'pointer' : 'default'; },
+    },
+  });
+  // Legend clicks on size entries toggle the size filter
+  chart.options.plugins.legend.onClick = (e, item) => {
+    const d = chart.data.datasets[item.datasetIndex];
+    if (d.kind === 'points') { state.sizes.has(d.label) ? state.sizes.delete(d.label) : state.sizes.add(d.label); saveState(); render(); }
+    else if (d.kind === 'removed') { state.showRemoved = !state.showRemoved; saveState(); render(); }
+  };
+}
+
+function initUI() {
+  document.querySelectorAll('.sizes input').forEach(cb => cb.addEventListener('change', () => {
+    cb.checked ? state.sizes.add(cb.value) : state.sizes.delete(cb.value); saveState(); render();
+  }));
+  document.getElementById('showRemoved').addEventListener('change', e => { state.showRemoved = e.target.checked; saveState(); render(); });
+  document.getElementById('restoreAll').onclick = () => { state.removed.clear(); saveState(); render(); };
+  document.getElementById('fDate').value = isoDate(new Date());
+
+  const msg = document.getElementById('formMsg');
+  document.getElementById('addForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const size = document.getElementById('fSize').value;
+    const days = Number(document.getElementById('fDays').value);
+    const dateStr = document.getElementById('fDate').value;
+    if (!SIZES.includes(size) || !Number.isFinite(days) || days < 0 || !parseDate(dateStr)) {
+      msg.className = 'msg err'; msg.textContent = 'Uzupełnij poprawnie wszystkie pola.'; return;
+    }
+    state.added.push({ id: 'a' + Date.now(), size, days, date: dateStr });
+    state.sizes.add(size);
+    saveState(); render();
+    document.getElementById('fDays').value = '';
+    msg.className = 'msg ok'; msg.textContent = `Dodano: ${size}, ${days} dni, ${fmtDate(parseDate(dateStr))}. Punkt zapisany w tej przeglądarce.`;
+  });
+  document.getElementById('clearAdded').onclick = () => {
+    if (!state.added.length) return;
+    if (!confirm(`Usunąć ${state.added.length} ręcznie dodanych punktów?`)) return;
+    state.added.forEach(a => state.removed.delete(a.id));
+    state.added = []; saveState(); render();
+    msg.className = 'msg ok'; msg.textContent = 'Usunięto ręcznie dodane punkty.';
+  };
+}
+
+(async () => {
+  initChart(); initUI();
+  points = await loadData();
+  render();
+})();
+</script>
+</body>
+</html>
