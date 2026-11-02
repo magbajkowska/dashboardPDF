@@ -436,7 +436,7 @@ function tpChart(id, yTitle) {
     options: {
       responsive: true, maintainAspectRatio: false, animation: { duration: 250 },
       scales: { x: { title: { display: true, text: 'Początek tygodnia (od 7 stycznia)' }, grid: { color: '#f0f0f5' } },
-                y: { title: { display: true, text: yTitle }, grid: { color: '#f0f0f5' } } },
+                y: { beginAtZero: true, title: { display: true, text: yTitle }, grid: { color: '#f0f0f5' } } },
       plugins: { legend: { position: 'bottom', labels: { usePointStyle: true } } },
     },
   });
@@ -456,8 +456,8 @@ async function initThroughput() {
   const n = x.length;
   const mean = x.reduce((a, b) => a + b, 0) / n;
   const mrBar = mr.reduce((a, b) => a + b, 0) / mr.length;
-  const xUcl = mean + 2.66 * mrBar, xLcl = mean - 2.66 * mrBar;
-  const mrUcl = mrBar + 3.27 * mrBar, mrLcl = mrBar - 3.27 * mrBar;
+  const xUcl = mean + 2.66 * mrBar, xLcl = Math.max(0, mean - 2.66 * mrBar);
+  const mrUcl = mrBar + 3.27 * mrBar, mrLcl = Math.max(0, mrBar - 3.27 * mrBar);
 
   const dot = (vals, lo, hi) => vals.map(v => (v > hi || v < lo) ? '#e08a8a' : '#6fb3cc');
   xChart.data.labels = labels;
@@ -465,7 +465,7 @@ async function initThroughput() {
     { label: 'Tempo dostarczania (tygodniowo)', data: x, borderColor: '#6fb3cc', backgroundColor: dot(x, xLcl, xUcl), pointBackgroundColor: dot(x, xLcl, xUcl), pointRadius: 5, borderWidth: 2, tension: 0 },
     lineDs('Średnia', n, mean, '#7fbf9f', []),
     lineDs('UCL (średnia + 2,66 × śr. MR)', n, xUcl, '#e08a8a', [6, 5]),
-    lineDs('LCL (średnia − 2,66 × śr. MR)', n, xLcl, '#e08a8a', [6, 5]),
+    lineDs('LCL (średnia − 2,66 × śr. MR, min. 0)', n, xLcl, '#e08a8a', [6, 5]),
   ];
   xChart.update();
 
@@ -474,7 +474,7 @@ async function initThroughput() {
     { label: 'Zakres ruchomy (MR)', data: mr, borderColor: '#a88bd0', backgroundColor: dot(mr, mrLcl, mrUcl), pointBackgroundColor: dot(mr, mrLcl, mrUcl), pointRadius: 5, borderWidth: 2, tension: 0 },
     lineDs('Śr. MR', mr.length, mrBar, '#7fbf9f', []),
     lineDs('Śr. MR + 3,27 × śr. MR', mr.length, mrUcl, '#e08a8a', [6, 5]),
-    lineDs('Śr. MR − 3,27 × śr. MR', mr.length, mrLcl, '#e08a8a', [6, 5]),
+    lineDs('Śr. MR − 3,27 × śr. MR (min. 0)', mr.length, mrLcl, '#e08a8a', [6, 5]),
   ];
   mrChart.update();
 
