@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dashboard – Czasy realizacji 2024–25</title>
+<title>Dashboard</title>
 <script src="vendor/chart.umd.min.js"></script>
 <script src="vendor/chartjs-adapter-date-fns.bundle.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
@@ -20,6 +20,12 @@
   header h1 { margin: 0; font-size: 1.5rem; font-weight: 600; }
   header p { margin: 4px 0 0; color: var(--muted); font-size: .9rem; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; padding: 16px 28px 28px; align-items: start; }
+  .layout > main { grid-column: 1; grid-row: 1; }
+  .layout > .add-bar { grid-column: 1; grid-row: 2; }
+  .layout > .side { grid-column: 2; grid-row: 1 / span 2; }
+  .add-bar form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; }
+  .add-bar form .row { margin: 0; flex: 1 1 160px; }
+  .add-bar form .actions { flex: 0 0 auto; }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; box-shadow: 0 2px 8px rgba(60,60,90,.04); }
   .card h2 { margin: 0 0 12px; font-size: 1rem; font-weight: 600; }
   .chart-wrap { position: relative; height: 560px; }
@@ -50,12 +56,12 @@
   .msg.err { color: #c0626b; } .msg.ok { color: #4f9a85; }
   .dates { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; font-size: .85rem; }
   .empty { color: var(--muted); font-size: .85rem; }
-  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .side { order: -1; } }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .layout > main, .layout > .add-bar, .layout > .side { grid-column: 1; grid-row: auto; } .layout > .side { order: -1; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>Czasy realizacji 2024–25</h1>
+  <h1>Dashboard</h1>
   <p>Źródło: <code>Lead Times - 2024-25.xlsx</code> · <span id="source"></span></p>
 </header>
 
@@ -65,6 +71,23 @@
     <div class="chart-wrap"><canvas id="chart"></canvas></div>
     <div class="hint">Kliknij punkt, aby go usunąć (element odstający). Kliknij usunięty (szary) punkt, aby go przywrócić. Linie prognoz liczone są z punktów widocznych i nieusuniętych.</div>
   </main>
+
+  <section class="card add-bar">
+    <h2>Dodaj punkt danych</h2>
+    <form id="addForm">
+      <div class="row"><label for="fSize">Rozmiar</label>
+        <select id="fSize" required><option>S</option><option>M</option><option>L</option></select></div>
+      <div class="row"><label for="fDays">Czas realizacji (dni)</label>
+        <input id="fDays" type="number" min="0" step="1" required></div>
+      <div class="row"><label for="fDate">Data ukończenia</label>
+        <input id="fDate" type="date" required></div>
+      <div class="actions">
+        <button class="primary" type="submit">Dodaj</button>
+        <button type="button" id="clearAdded">Usuń dodane</button>
+      </div>
+    </form>
+    <div class="msg" id="formMsg"></div>
+  </section>
 
   <aside class="side">
     <section class="card" id="filters">
@@ -98,22 +121,6 @@
       <div class="actions" style="margin-top:8px"><button type="button" id="restoreAll">Przywróć wszystkie</button></div>
     </section>
 
-    <section class="card">
-      <h2>Dodaj punkt danych</h2>
-      <form id="addForm">
-        <div class="row"><label for="fSize">Rozmiar</label>
-          <select id="fSize" required><option>S</option><option>M</option><option>L</option></select></div>
-        <div class="row"><label for="fDays">Czas realizacji (dni)</label>
-          <input id="fDays" type="number" min="0" step="1" required></div>
-        <div class="row"><label for="fDate">Data ukończenia</label>
-          <input id="fDate" type="date" required></div>
-        <div class="actions">
-          <button class="primary" type="submit">Dodaj</button>
-          <button type="button" id="clearAdded">Usuń dodane</button>
-        </div>
-        <div class="msg" id="formMsg"></div>
-      </form>
-    </section>
   </aside>
 </div>
 
