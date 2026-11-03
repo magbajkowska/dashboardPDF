@@ -59,12 +59,19 @@
   .tabs { display: flex; gap: 6px; padding: 8px 28px 0; border-bottom: 1px solid var(--border); }
   .tab { border-radius: 8px 8px 0 0; border-bottom: none; background: #ececf6; font-weight: 600; font-size: .85rem; letter-spacing: .03em; }
   .tab.active { background: var(--card); color: #4f6fa8; border-color: var(--border); }
-  .xmr { padding: 16px 28px 28px; display: grid; gap: 20px; }
+  .xmr { padding: 16px 28px 28px; display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+  .xmr > section { grid-column: 1; }
+  .xmr > aside { grid-column: 2; grid-row: 1 / span 2; }
+  .sig-legend { list-style: none; margin: 0; padding: 0; font-size: .85rem; }
+  .sig-legend li { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-bottom: 1px dashed var(--border); }
+  .sig-legend li:last-child { border-bottom: none; }
+  .sig-legend .dot { flex: none; margin-top: 2px; }
+  .sig-legend .cnt { margin-left: auto; font-weight: 600; white-space: nowrap; }
   .xmr .chart-wrap { height: 340px; }
   .xmr .stats { display: flex; flex-wrap: wrap; gap: 6px 24px; font-size: .85rem; color: var(--muted); margin-bottom: 8px; }
   .xmr .stats b { color: var(--text); }
   [hidden] { display: none !important; }
-  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .layout > main, .layout > .add-bar, .layout > .side { grid-column: 1; grid-row: auto; } .layout > .side { order: -1; } }
+  @media (max-width: 900px) { .xmr { grid-template-columns: 1fr; } .xmr > section, .xmr > aside { grid-column: 1; grid-row: auto; } .layout { grid-template-columns: 1fr; } .layout > main, .layout > .add-bar, .layout > .side { grid-column: 1; grid-row: auto; } .layout > .side { order: -1; } }
 </style>
 </head>
 <body>
@@ -147,8 +154,27 @@
     <h2>Tempo dostarczania – wykres MR (zakres ruchomy)</h2>
     <div class="stats" id="mrStats"></div>
     <div class="chart-wrap"><canvas id="mrChart"></canvas></div>
-    <div class="hint" id="tpInfo"></div>
   </section>
+  <aside class="card">
+    <h2>Legenda sygnałów</h2>
+    <ul class="sig-legend">
+      <li><span class="dot" style="background:#e05a5a"></span><span><b>Czerwony</b> – punkt poza limitami (alert)</span></li>
+      <li><span class="dot" style="background:#f5963c"></span><span><b>Pomarańczowy</b> – 2 z 3 kolejnych punktów poza 2/3 zakresu od średniej do granicy (umiarkowany alert)</span></li>
+      <li><span class="dot" style="background:#f2d034"></span><span><b>Żółty</b> – 3 z 5 kolejnych punktów poza 1/3 zakresu od średniej do granicy (umiarkowany trwały sygnał)</span></li>
+      <li><span class="dot" style="background:#9b6fd6"></span><span><b>Fioletowy</b> – 8 kolejnych punktów po jednej stronie średniej (sygnał niewielkiej trwałej zmiany)</span></li>
+      <li><span class="dot" style="background:#6fb3cc"></span><span><b>Niebieski</b> – punkt bez sygnału</span></li>
+    </ul>
+    <h2 style="margin-top:18px">Liczba sygnałów</h2>
+    <div id="sigCounts"></div>
+    <h2 style="margin-top:18px">Linie</h2>
+    <ul class="sig-legend">
+      <li><span class="line" style="border-color:#7fbf9f;border-top-style:solid"></span><span>Średnia</span></li>
+      <li><span class="line" style="border-color:#e08a8a"></span><span>Limity UCL / LCL (dolny min. 0)</span></li>
+      <li><span class="line" style="border-color:#f0a77a;border-top-style:dotted"></span><span>2/3 zakresu od średniej</span></li>
+      <li><span class="line" style="border-color:#e8c95a;border-top-style:dotted"></span><span>1/3 zakresu od średniej</span></li>
+    </ul>
+    <div class="hint" id="tpInfo"></div>
+  </aside>
 </div>
 
 <script>
@@ -446,6 +472,33 @@ function lineDs(label, n, v, color, dash) {
   return { label: `${label}: ${v.toFixed(2)}`, data: flat(n, v), borderColor: color, borderWidth: 2, borderDash: dash, pointRadius: 0, fill: false };
 }
 
+const SIGNAL_COLORS = { red: '#e05a5a', orange: '#f5963c', yellow: '#f2d034', purple: '#9b6fd6' };
+// Sygnały: red = poza limitami; orange = 2 z 3 poza 2/3 zakresu; yellow = 3 z 5 poza 1/3 zakresu; purple = 8 kolejnych po jednej stronie średniej
+function detectSignals(v, mean, lcl, ucl) {
+  const n = v.length, sig = Array(n).fill(null);
+  const rank = { red: 4, orange: 3, yellow: 2, purple: 1 };
+  const mark = (i, c) => { if (!sig[i] || rank[c] > rank[sig[i]]) sig[i] = c; };
+  v.forEach((y, i) => { if (y > ucl || y < lcl) mark(i, 'red'); });
+  const beyond = (frac, side) => v.map(y => side > 0 ? y > mean + (ucl - mean) * frac : y < mean - (mean - lcl) * frac);
+  const windows = (size, need, frac, color) => [1, -1].forEach(side => {
+    const b = beyond(frac, side);
+    for (let i = 0; i + size <= n; i++) {
+      const idx = []; for (let j = i; j < i + size; j++) if (b[j]) idx.push(j);
+      if (idx.length >= need) idx.forEach(j => mark(j, color));
+    }
+  });
+  windows(3, 2, 2 / 3, 'orange');
+  windows(5, 3, 1 / 3, 'yellow');
+  let run = 0, prev = 0;
+  v.forEach((y, i) => {
+    const side = Math.sign(y - mean);
+    run = side !== 0 && side === prev ? run + 1 : (side !== 0 ? 1 : 0); prev = side;
+    if (run === 8) for (let j = i - 7; j <= i; j++) mark(j, 'purple');
+    else if (run > 8) mark(i, 'purple');
+  });
+  return sig;
+}
+
 async function initThroughput() {
   tpLoaded = true;
   const { rows, src } = await loadDaily();
@@ -459,29 +512,49 @@ async function initThroughput() {
   const xUcl = mean + 2.66 * mrBar, xLcl = Math.max(0, mean - 2.66 * mrBar);
   const mrUcl = mrBar + 3.27 * mrBar, mrLcl = Math.max(0, mrBar - 3.27 * mrBar);
 
-  const dot = (vals, lo, hi) => vals.map(v => (v > hi || v < lo) ? '#e08a8a' : '#6fb3cc');
+  const xSig = detectSignals(x, mean, xLcl, xUcl);
+  const mrSig = detectSignals(mr, mrBar, mrLcl, mrUcl);
+  const zones = (m, lcl, ucl, len) => [
+    lineDs('+2/3 zakresu', len, m + (ucl - m) * 2 / 3, '#f0a77a', [2, 3]),
+    lineDs('+1/3 zakresu', len, m + (ucl - m) / 3, '#e8c95a', [2, 3]),
+    lineDs('−1/3 zakresu', len, m - (m - lcl) / 3, '#e8c95a', [2, 3]),
+    lineDs('−2/3 zakresu', len, m - (m - lcl) * 2 / 3, '#f0a77a', [2, 3]),
+  ];
+  const series = (label, data, sig, color) => ({
+    label, data, borderColor: color, backgroundColor: sig.map(c => SIGNAL_COLORS[c] || '#6fb3cc'),
+    pointBackgroundColor: sig.map(c => SIGNAL_COLORS[c] || '#6fb3cc'),
+    pointBorderColor: sig.map(c => SIGNAL_COLORS[c] ? '#555' : color),
+    pointRadius: sig.map(c => c ? 7 : 5), borderWidth: 2, tension: 0,
+  });
   xChart.data.labels = labels;
   xChart.data.datasets = [
-    { label: 'Tempo dostarczania (tygodniowo)', data: x, borderColor: '#6fb3cc', backgroundColor: dot(x, xLcl, xUcl), pointBackgroundColor: dot(x, xLcl, xUcl), pointRadius: 5, borderWidth: 2, tension: 0 },
+    series('Tempo dostarczania (tygodniowo)', x, xSig, '#6fb3cc'),
     lineDs('Średnia', n, mean, '#7fbf9f', []),
     lineDs('UCL (średnia + 2,66 × śr. MR)', n, xUcl, '#e08a8a', [6, 5]),
     lineDs('LCL (średnia − 2,66 × śr. MR, min. 0)', n, xLcl, '#e08a8a', [6, 5]),
+    ...zones(mean, xLcl, xUcl, n),
   ];
   xChart.update();
 
   mrChart.data.labels = labels.slice(1);
   mrChart.data.datasets = [
-    { label: 'Zakres ruchomy (MR)', data: mr, borderColor: '#a88bd0', backgroundColor: dot(mr, mrLcl, mrUcl), pointBackgroundColor: dot(mr, mrLcl, mrUcl), pointRadius: 5, borderWidth: 2, tension: 0 },
+    series('Zakres ruchomy (MR)', mr, mrSig, '#a88bd0'),
     lineDs('Śr. MR', mr.length, mrBar, '#7fbf9f', []),
     lineDs('Śr. MR + 3,27 × śr. MR', mr.length, mrUcl, '#e08a8a', [6, 5]),
     lineDs('Śr. MR − 3,27 × śr. MR (min. 0)', mr.length, mrLcl, '#e08a8a', [6, 5]),
+    ...zones(mrBar, mrLcl, mrUcl, mr.length),
   ];
   mrChart.update();
+  const sigRow = (sig, lbl) => {
+    const c = k => sig.filter(v => v === k).length;
+    return `<div style="margin-bottom:8px"><b>${lbl}</b><div class="hint" style="margin-top:2px">${Object.keys(SIGNAL_COLORS).map(k => `<span class="dot" style="background:${SIGNAL_COLORS[k]};width:10px;height:10px"></span> ${c(k)}`).join(' &nbsp; ')}</div></div>`;
+  };
+  document.getElementById('sigCounts').innerHTML = sigRow(xSig, 'Wykres X') + sigRow(mrSig, 'Wykres MR');
 
   const f = v => v.toFixed(2).replace('.', ',');
   document.getElementById('xStats').innerHTML = `<span>Średnia: <b>${f(mean)}</b></span><span>UCL: <b>${f(xUcl)}</b></span><span>LCL: <b>${f(xLcl)}</b></span>`;
   document.getElementById('mrStats').innerHTML = `<span>Śr. MR: <b>${f(mrBar)}</b></span><span>Górny limit: <b>${f(mrUcl)}</b></span><span>Dolny limit: <b>${f(mrLcl)}</b></span>`;
-  document.getElementById('tpInfo').textContent = `Źródło: ${TP_FILE} (${src}). ${n} pełnych tygodni (7-dniowych okresów liczonych od 7 stycznia)${dropped ? `; pominięto ${dropped} niepełny ostatni tydzień` : ''}. Punkty poza limitami zaznaczono na czerwono.`;
+  document.getElementById('tpInfo').textContent = `Źródło: ${TP_FILE} (${src}). ${n} pełnych tygodni (7-dniowych okresów liczonych od 7 stycznia)${dropped ? `; pominięto ${dropped} niepełny ostatni tydzień` : ''}.`;
 }
 
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
