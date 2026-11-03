@@ -164,6 +164,7 @@
       <li><span class="dot" style="background:#9b6fd6"></span><span><b>Fioletowy</b> – 8 kolejnych punktów po jednej stronie średniej (sygnał niewielkiej trwałej zmiany)</span></li>
       <li><span class="dot" style="background:#6fb3cc"></span><span><b>Niebieski</b> – punkt bez sygnału</span></li>
     </ul>
+    <div class="actions" style="margin-top:12px"><button type="button" id="toggleSignals" class="primary">Ukryj sygnały</button></div>
     <h2 style="margin-top:18px">Liczba sygnałów</h2>
     <div id="sigCounts"></div>
     <h2 style="margin-top:18px">Linie</h2>
@@ -427,7 +428,21 @@ function initUI() {
 const TP_FILE = 'Throughput Daily.xlsx';
 const TP_START = new Date(2025, 0, 7);
 const TP_FALLBACK = [0,2,10,3,0,0,2,3,7,0,0,0,0,5,2,0,0,0,0,0,1,1,0,5,4,0,0,7,0,2,2,12,0,0,1,0,0,2,12,0,0,1,0,0,3,11,0,0,6,0,0,6,7,0,0,2,0,0,3,5,0,0,1,0,0,9,7,0,0,3,0,0,4,10,0,0,1,0,0,5,1,0,0,2,0,0,2,11,0,0,1,0,0,5,2,0,0,1,0,0,4,7,0]; // dzienne wartości od 7.01.2025
-let xChart, mrChart, tpLoaded = false;
+let xChart, mrChart, tpLoaded = false, showSignals = true;
+
+function applySignalVisibility() {
+  [xChart, mrChart].forEach(ch => {
+    const d = ch.data.datasets[0];
+    if (!d || !d.sig) return;
+    const col = c => showSignals && SIGNAL_COLORS[c] ? SIGNAL_COLORS[c] : '#6fb3cc';
+    d.backgroundColor = d.pointBackgroundColor = d.sig.map(col);
+    d.pointBorderColor = d.sig.map(c => showSignals && SIGNAL_COLORS[c] ? '#555' : d.baseColor);
+    d.pointRadius = d.sig.map(c => showSignals && c ? 7 : 5);
+    ch.update();
+  });
+  const b = document.getElementById('toggleSignals');
+  if (b) b.textContent = showSignals ? 'Ukryj sygnały' : 'Pokaż sygnały';
+}
 
 async function loadDaily() {
   try {
@@ -520,12 +535,7 @@ async function initThroughput() {
     lineDs('−1/3 zakresu', len, m - (m - lcl) / 3, '#e8c95a', [2, 3]),
     lineDs('−2/3 zakresu', len, m - (m - lcl) * 2 / 3, '#f0a77a', [2, 3]),
   ];
-  const series = (label, data, sig, color) => ({
-    label, data, borderColor: color, backgroundColor: sig.map(c => SIGNAL_COLORS[c] || '#6fb3cc'),
-    pointBackgroundColor: sig.map(c => SIGNAL_COLORS[c] || '#6fb3cc'),
-    pointBorderColor: sig.map(c => SIGNAL_COLORS[c] ? '#555' : color),
-    pointRadius: sig.map(c => c ? 7 : 5), borderWidth: 2, tension: 0,
-  });
+  const series = (label, data, sig, color) => ({ label, data, borderColor: color, borderWidth: 2, tension: 0, sig, baseColor: color });
   xChart.data.labels = labels;
   xChart.data.datasets = [
     series('Tempo dostarczania (tygodniowo)', x, xSig, '#6fb3cc'),
@@ -544,7 +554,7 @@ async function initThroughput() {
     lineDs('Śr. MR − 3,27 × śr. MR (min. 0)', mr.length, mrLcl, '#e08a8a', [6, 5]),
     ...zones(mrBar, mrLcl, mrUcl, mr.length),
   ];
-  mrChart.update();
+  applySignalVisibility();
   const sigRow = (sig, lbl) => {
     const c = k => sig.filter(v => v === k).length;
     return `<div style="margin-bottom:8px"><b>${lbl}</b><div class="hint" style="margin-top:2px">${Object.keys(SIGNAL_COLORS).map(k => `<span class="dot" style="background:${SIGNAL_COLORS[k]};width:10px;height:10px"></span> ${c(k)}`).join(' &nbsp; ')}</div></div>`;
@@ -556,6 +566,8 @@ async function initThroughput() {
   document.getElementById('mrStats').innerHTML = `<span>Śr. MR: <b>${f(mrBar)}</b></span><span>Górny limit: <b>${f(mrUcl)}</b></span><span>Dolny limit: <b>${f(mrLcl)}</b></span>`;
   document.getElementById('tpInfo').textContent = `Źródło: ${TP_FILE} (${src}). ${n} pełnych tygodni (7-dniowych okresów liczonych od 7 stycznia)${dropped ? `; pominięto ${dropped} niepełny ostatni tydzień` : ''}.`;
 }
+
+document.getElementById('toggleSignals').addEventListener('click', () => { showSignals = !showSignals; applySignalVisibility(); });
 
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === b));
