@@ -59,12 +59,19 @@
   .tabs { display: flex; gap: 6px; padding: 8px 28px 0; border-bottom: 1px solid var(--border); }
   .tab { border-radius: 8px 8px 0 0; border-bottom: none; background: #ececf6; font-weight: 600; font-size: .85rem; letter-spacing: .03em; }
   .tab.active { background: var(--card); color: #4f6fa8; border-color: var(--border); }
-  .xmr { padding: 16px 28px 28px; display: grid; gap: 20px; }
+  .xmr { padding: 16px 28px 28px; display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+  .xmr > section { grid-column: 1; }
+  .xmr > aside { grid-column: 2; grid-row: 1 / span 2; }
+  .sig-legend { list-style: none; margin: 0; padding: 0; font-size: .85rem; }
+  .sig-legend li { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-bottom: 1px dashed var(--border); }
+  .sig-legend li:last-child { border-bottom: none; }
+  .sig-legend .dot { flex: none; margin-top: 2px; }
+  .sig-legend .cnt { margin-left: auto; font-weight: 600; white-space: nowrap; }
   .xmr .chart-wrap { height: 340px; }
   .xmr .stats { display: flex; flex-wrap: wrap; gap: 6px 24px; font-size: .85rem; color: var(--muted); margin-bottom: 8px; }
   .xmr .stats b { color: var(--text); }
   [hidden] { display: none !important; }
-  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .layout > main, .layout > .add-bar, .layout > .side { grid-column: 1; grid-row: auto; } .layout > .side { order: -1; } }
+  @media (max-width: 900px) { .xmr { grid-template-columns: 1fr; } .xmr > section, .xmr > aside { grid-column: 1; grid-row: auto; } .layout { grid-template-columns: 1fr; } .layout > main, .layout > .add-bar, .layout > .side { grid-column: 1; grid-row: auto; } .layout > .side { order: -1; } }
 </style>
 </head>
 <body>
@@ -147,14 +154,27 @@
     <h2>Tempo dostarczania – wykres MR (zakres ruchomy)</h2>
     <div class="stats" id="mrStats"></div>
     <div class="chart-wrap"><canvas id="mrChart"></canvas></div>
-    <div class="hint" id="tpInfo"></div>
-    <div class="stats" style="margin-top:10px">
-      <span><span class="dot" style="background:#e05a5a"></span> punkt poza limitami</span>
-      <span><span class="dot" style="background:#f5963c"></span> 2 z 3 kolejnych punktów poza 2/3 zakresu</span>
-      <span><span class="dot" style="background:#f2d034"></span> 3 z 5 kolejnych punktów poza 1/3 zakresu</span>
-      <span><span class="dot" style="background:#9b6fd6"></span> 8 kolejnych punktów po jednej stronie średniej</span>
-    </div>
   </section>
+  <aside class="card">
+    <h2>Legenda sygnałów</h2>
+    <ul class="sig-legend">
+      <li><span class="dot" style="background:#e05a5a"></span><span><b>Czerwony</b> – punkt poza limitami (alert)</span></li>
+      <li><span class="dot" style="background:#f5963c"></span><span><b>Pomarańczowy</b> – 2 z 3 kolejnych punktów poza 2/3 zakresu od średniej do granicy (umiarkowany alert)</span></li>
+      <li><span class="dot" style="background:#f2d034"></span><span><b>Żółty</b> – 3 z 5 kolejnych punktów poza 1/3 zakresu od średniej do granicy (umiarkowany trwały sygnał)</span></li>
+      <li><span class="dot" style="background:#9b6fd6"></span><span><b>Fioletowy</b> – 8 kolejnych punktów po jednej stronie średniej (sygnał niewielkiej trwałej zmiany)</span></li>
+      <li><span class="dot" style="background:#6fb3cc"></span><span><b>Niebieski</b> – punkt bez sygnału</span></li>
+    </ul>
+    <h2 style="margin-top:18px">Liczba sygnałów</h2>
+    <div id="sigCounts"></div>
+    <h2 style="margin-top:18px">Linie</h2>
+    <ul class="sig-legend">
+      <li><span class="line" style="border-color:#7fbf9f;border-top-style:solid"></span><span>Średnia</span></li>
+      <li><span class="line" style="border-color:#e08a8a"></span><span>Limity UCL / LCL (dolny min. 0)</span></li>
+      <li><span class="line" style="border-color:#f0a77a;border-top-style:dotted"></span><span>2/3 zakresu od średniej</span></li>
+      <li><span class="line" style="border-color:#e8c95a;border-top-style:dotted"></span><span>1/3 zakresu od średniej</span></li>
+    </ul>
+    <div class="hint" id="tpInfo"></div>
+  </aside>
 </div>
 
 <script>
@@ -525,15 +545,16 @@ async function initThroughput() {
     ...zones(mrBar, mrLcl, mrUcl, mr.length),
   ];
   mrChart.update();
-  const sigNote = (sig, lbl) => {
+  const sigRow = (sig, lbl) => {
     const c = k => sig.filter(v => v === k).length;
-    return `${lbl}: ${c('red')} czerwonych, ${c('orange')} pomarańczowych, ${c('yellow')} żółtych, ${c('purple')} fioletowych punktów.`;
+    return `<div style="margin-bottom:8px"><b>${lbl}</b><div class="hint" style="margin-top:2px">${Object.keys(SIGNAL_COLORS).map(k => `<span class="dot" style="background:${SIGNAL_COLORS[k]};width:10px;height:10px"></span> ${c(k)}`).join(' &nbsp; ')}</div></div>`;
   };
+  document.getElementById('sigCounts').innerHTML = sigRow(xSig, 'Wykres X') + sigRow(mrSig, 'Wykres MR');
 
   const f = v => v.toFixed(2).replace('.', ',');
   document.getElementById('xStats').innerHTML = `<span>Średnia: <b>${f(mean)}</b></span><span>UCL: <b>${f(xUcl)}</b></span><span>LCL: <b>${f(xLcl)}</b></span>`;
   document.getElementById('mrStats').innerHTML = `<span>Śr. MR: <b>${f(mrBar)}</b></span><span>Górny limit: <b>${f(mrUcl)}</b></span><span>Dolny limit: <b>${f(mrLcl)}</b></span>`;
-  document.getElementById('tpInfo').textContent = `Źródło: ${TP_FILE} (${src}). ${n} pełnych tygodni (7-dniowych okresów liczonych od 7 stycznia)${dropped ? `; pominięto ${dropped} niepełny ostatni tydzień` : ''}. ${sigNote(xSig, 'Wykres X')} ${sigNote(mrSig, 'Wykres MR')}`;
+  document.getElementById('tpInfo').textContent = `Źródło: ${TP_FILE} (${src}). ${n} pełnych tygodni (7-dniowych okresów liczonych od 7 stycznia)${dropped ? `; pominięto ${dropped} niepełny ostatni tydzień` : ''}.`;
 }
 
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
